@@ -140,7 +140,15 @@ h1, h2 { text-wrap: balance; }
   display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; flex-shrink: 0; font-variant-numeric: tabular-nums;
 }
 .timer svg { stroke: var(--bg); }
-.leaflet-top.leaflet-right { top: calc(64px + env(safe-area-inset-top, 0px)); }
+.leaflet-top.leaflet-left { top: calc(62px + env(safe-area-inset-top, 0px)); left: max(8px, env(safe-area-inset-left, 0px)); }
+.leaflet-top.leaflet-left .leaflet-control-attribution { margin: 0; border-radius: 6px; }
+.locate {
+  position: absolute; z-index: 500; right: max(16px, env(safe-area-inset-right, 0px));
+  top: calc(66px + env(safe-area-inset-top, 0px));
+}
+.locate svg { stroke: var(--user); }
+.ext-link { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; color: var(--accent); text-decoration: none; min-height: 32px; }
+.ext-link svg { stroke: var(--accent); }
 .leaflet-control-attribution { font-family: var(--font-body); font-size: 10px; }
 .leaflet-container { font-family: var(--font-body); background: var(--bg); }
 .leaflet-tile-pane { filter: var(--tile-filter); }
@@ -296,7 +304,7 @@ h1, h2 { text-wrap: balance; }
         Построить прогулку
         <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
-      <p class="note">Пока маршруты есть только по Замоскворечью и набережным напротив Кремля.</p>
+      <p class="note">В Замоскворечье — места с нашими описаниями. В других районах соберём интересные места вокруг вас из OpenStreetMap.</p>
     </div>
   </div>
 </section>
@@ -314,6 +322,9 @@ h1, h2 { text-wrap: balance; }
       <span id="timerText">—</span>
     </div>
   </div>
+  <button id="locBtn" class="round locate" type="button" aria-label="Показать, где я">
+    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/></svg>
+  </button>
   <div class="sheet" id="sheet"><div class="sheet-inner" id="sheetInner"></div></div>
 </section>
 
@@ -332,7 +343,7 @@ h1, h2 { text-wrap: balance; }
    type: view | bridge | sight | street | park
    moods: pretty (красиво), cozy (уютно), food (поесть), odd (необычно)
    ========================================================= */
-const POINTS = [
+const CURATED = [
   { id: 'sofia', name: 'Софийская набережная', type: 'view', label: 'Вид', ll: [55.7480, 37.6185], moods: ['pretty'], base: 3, evening: true,
     hint: 'Идите к реке: там вас ждёт самый открыточный вид города.',
     desc: 'Отсюда Кремль виден через реку целиком: стены, башни и купола соборов. Вечером включают подсветку, и здесь хочется задержаться подольше.',
@@ -427,7 +438,7 @@ const POINTS = [
     todo: ['Рассмотреть декор фасада', 'Посчитать ярусы колокольни'], meta: 'Снаружи · Бесплатно' }
 ];
 
-const METRO = [
+const CENTER_METRO = [
   { name: 'Новокузнецкая', ll: [55.7424, 37.6292] },
   { name: 'Третьяковская', ll: [55.7407, 37.6266] },
   { name: 'Полянка', ll: [55.7367, 37.6187] },
@@ -438,6 +449,11 @@ const METRO = [
   { name: 'Парк культуры', ll: [55.7353, 37.5932] }
 ];
 
+// Активный набор мест: либо Замоскворечье (CURATED), либо найденные вокруг вас в OpenStreetMap
+let POINTS = CURATED;
+let METRO = CENTER_METRO;
+const DISCOVER_RADIUS = { 30: 1000, 60: 1600, 120: 2600 }; // м: где искать места вокруг вас
+
 const AREA_CENTER = [55.7405, 37.6200];
 const AREA_RADIUS = 3200;            // м: дальше — показываем демо
 const DEMO_START = { ll: [55.7424, 37.6292], name: 'м. Новокузнецкая' };
@@ -447,7 +463,11 @@ const DWELL = { view: 6, bridge: 5, sight: 5, street: 4, park: 10, food: 25 };
 const ARRIVE_RADIUS = 45;            // м: «вы на месте»
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const ROUTER = 'https://routing.openstreetmap.de/routed-foot/route/v1/foot/';
-const OVERPASS = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+];
 
 /* ================= Утилиты ================= */
 const $ = (id) => document.getElementById(id);
@@ -467,7 +487,7 @@ function bearingText(a, b) {
 }
 function fmtDist(m) { return m < 1000 ? (Math.round(m / 10) * 10) + ' м' : (m / 1000).toFixed(1).replace('.', ',') + ' км'; }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-function nearestMetro(ll) { return METRO.reduce((best, m) => (hav(ll, m.ll) < hav(ll, best.ll) ? m : best), METRO[0]); }
+function nearestMetro(ll) { return METRO.length ? METRO.reduce((best, m) => (hav(ll, m.ll) < hav(ll, best.ll) ? m : best), METRO[0]) : null; }
 const hour = () => new Date().getHours();
 const isNight = () => hour() >= 21 || hour() < 7;
 const isEvening = () => hour() >= 17 || hour() < 7;
@@ -554,8 +574,8 @@ function renderLocChip() {
     t.textContent = S.gpsAsked ? 'Не получилось определить место. Начнём демо от м. Новокузнецкая' : 'Нажмите, чтобы определить, где вы';
     return;
   }
-  if (!inArea(S.gps)) { t.textContent = 'Вы далеко от Замоскворечья. Покажем демо от м. Новокузнецкая'; return; }
-  const m = nearestMetro(S.gps);
+  if (!inArea(S.gps)) { t.textContent = 'Вы здесь · соберём интересные места вокруг вас'; return; }
+  const m = CENTER_METRO.reduce((best, x) => (hav(S.gps, x.ll) < hav(S.gps, best.ll) ? x : best), CENTER_METRO[0]);
   t.textContent = 'Вы здесь · ' + fmtDist(hav(S.gps, m.ll)) + ' от м. ' + m.name;
 }
 function getPosition() {
@@ -583,7 +603,7 @@ if (navigator.permissions && navigator.permissions.query) {
 /* ================= Подбор маршрута ================= */
 function endFor(ll, startLL) {
   if (S.finish === 'back') return { ll: startLL, name: 'Возвращаемся к началу', kind: 'end' };
-  if (S.finish === 'metro') { const m = nearestMetro(ll); return { ll: m.ll, name: 'м. ' + m.name, kind: 'end' }; }
+  if (S.finish === 'metro') { const m = nearestMetro(ll); return m ? { ll: m.ll, name: 'м. ' + m.name, kind: 'end' } : null; }
   return null;
 }
 function pointScore(p) {
@@ -625,12 +645,99 @@ function plan(fromLL, budget, startLL, exclude) {
   return { points: best.route.map((p) => ({ ...p, kind: 'point' })), end };
 }
 
+/* ================= Запросы к OpenStreetMap ================= */
+async function overpass(q, ms) {
+  let lastErr = new Error('overpass unavailable');
+  for (const url of OVERPASS_URLS) {
+    try {
+      const res = await fetchTimeout(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, ms || 15000);
+      if (res.ok) return await res.json();
+      lastErr = new Error('overpass ' + res.status);
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
+/* ================= Места вокруг вас (любой район) ================= */
+const GENERIC = {
+  park: { hint: 'Ищите зелень: впереди место, где можно передохнуть.', desc: 'Зелёное место, чтобы пройтись не спеша и посидеть на скамейке.', todo: ['Найти самую уютную скамейку', 'Пройти по дорожке, по которой вы ещё не ходили'] },
+  water: { hint: 'Идите к воде.', desc: 'Вода всегда успокаивает. Можно постоять у берега и посмотреть на отражения.', todo: ['Пройтись вдоль берега', 'Найти место с лучшим видом на воду'] },
+  view: { hint: 'Впереди место, откуда далеко видно.', desc: 'Точка с хорошим видом, отмеченная в OpenStreetMap.', todo: ['Найти самый красивый ракурс', 'Сделать общее фото'] },
+  art: { hint: 'Впереди работа художника. Попробуйте найти её первыми.', desc: 'Арт-объект в городе. Не всегда понятно, что хотел сказать автор, — в этом и интерес.', todo: ['Придумать, что хотел сказать автор', 'Сделать фото вместе с ним'] },
+  culture: { hint: 'Впереди место, где бывает что-то интересное.', desc: 'Место, где проходят выставки, спектакли или занятия.', todo: ['Посмотреть афишу у входа', 'Решить, придёте ли сюда в другой раз'] },
+  worship: { hint: 'Ищите купола или необычное здание.', desc: 'Храм, отмеченный в OpenStreetMap. Даже если не заходить внутрь, его интересно рассмотреть снаружи.', todo: ['Рассмотреть здание со всех сторон', 'Найти самую красивую деталь фасада'] },
+  monument: { hint: 'Впереди памятник. Узнаете его?', desc: 'Памятник или мемориал, отмеченный в OpenStreetMap.', todo: ['Прочитать надпись', 'Узнать, кому или чему он посвящён'] },
+  history: { hint: 'Впереди место со своей историей.', desc: 'Историческое место, отмеченное в OpenStreetMap.', todo: ['Поискать табличку с историей места', 'Представить, как здесь было сто лет назад'] },
+  fountain: { hint: 'Прислушайтесь: впереди шумит вода.', desc: 'Фонтан. Летом рядом с ним приятно посидеть.', todo: ['Посидеть рядом пару минут', 'Загадать желание'] },
+  attraction: { hint: 'Впереди местная достопримечательность.', desc: 'Место, которое в OpenStreetMap отмечено как интересное.', todo: ['Понять, чем оно примечательно', 'Сделать общее фото'] }
+};
+function classify(tags) {
+  const n = tags.name || '';
+  if (tags.access === 'private' || tags.railway) return null;
+  if (tags.leisure === 'park' || tags.leisure === 'garden') return { g: 'park', type: 'park', label: /сквер/i.test(n) ? 'Сквер' : (tags.leisure === 'garden' ? 'Сад' : 'Парк'), moods: ['cozy', 'pretty'], base: 2 };
+  if (tags.natural === 'water') return { g: 'water', type: 'view', label: /озер/i.test(n) || tags.water === 'lake' ? 'Озеро' : 'Пруд', moods: ['pretty', 'cozy'], base: 2.5, evening: true, big: true };
+  if (tags.tourism === 'viewpoint') return { g: 'view', type: 'view', label: 'Смотровая точка', moods: ['pretty'], base: 3, evening: true };
+  if (tags.tourism === 'artwork') {
+    const at = { sculpture: 'Скульптура', statue: 'Скульптура', mural: 'Мурал', graffiti: 'Граффити', installation: 'Инсталляция' }[tags.artwork_type] || 'Арт-объект';
+    return { g: 'art', type: 'sight', label: at, moods: ['odd'], base: 2, fallbackName: at };
+  }
+  if (tags.tourism === 'museum' || tags.tourism === 'gallery' || tags.amenity === 'arts_centre' || tags.amenity === 'theatre') {
+    return n ? { g: 'culture', type: 'sight', label: tags.tourism === 'museum' ? 'Музей' : tags.amenity === 'theatre' ? 'Театр' : tags.tourism === 'gallery' ? 'Галерея' : 'Культура', moods: ['odd'], base: 2 } : null;
+  }
+  if (tags.amenity === 'place_of_worship') return n ? { g: 'worship', type: 'sight', label: tags.religion === 'muslim' ? 'Мечеть' : 'Храм', moods: ['pretty', 'cozy'], base: 2 } : null;
+  if (tags.historic === 'memorial' || tags.historic === 'monument') {
+    if (['plaque', 'blue_plaque', 'stolperstein', 'stone', 'grave'].includes(tags.memorial)) return null;
+    return n ? { g: 'monument', type: 'sight', label: 'Памятник', moods: ['odd'], base: 1.5 } : null;
+  }
+  if (tags.historic) return n ? { g: 'history', type: 'sight', label: 'История', moods: ['odd', 'pretty'], base: 2 } : null;
+  if (tags.amenity === 'fountain') return { g: 'fountain', type: 'sight', label: 'Фонтан', moods: ['pretty'], base: 1, fallbackName: 'Фонтан' };
+  if (tags.tourism === 'attraction') return n ? { g: 'attraction', type: 'sight', label: 'Достопримечательность', moods: ['odd', 'pretty'], base: 2.5 } : null;
+  return null;
+}
+async function discover(ll, radius) {
+  const a = '(around:' + radius + ',' + ll[0].toFixed(5) + ',' + ll[1].toFixed(5) + ')';
+  const q = '[out:json][timeout:25];(' +
+    'nwr["leisure"~"^(park|garden)$"]["name"]' + a + ';' +
+    'nwr["natural"="water"]["name"]' + a + ';' +
+    'nwr["tourism"~"^(viewpoint|attraction|artwork|museum|gallery)$"]' + a + ';' +
+    'nwr["historic"]["name"]' + a + ';' +
+    'nwr["amenity"~"^(place_of_worship|arts_centre|theatre)$"]["name"]' + a + ';' +
+    'node["amenity"="fountain"]' + a + ';' +
+    'node["railway"="station"]["station"="subway"]["name"]' + a + ';' +
+    ');out tags center 500;';
+  const data = await overpass(q, 25000);
+  const points = [], metro = [], seenNames = new Map();
+  for (const e of data.elements) {
+    const lat = e.lat ?? (e.center && e.center.lat), lon = e.lon ?? (e.center && e.center.lon);
+    if (lat == null) continue;
+    const tags = e.tags || {};
+    if (tags.railway === 'station') {
+      if (!metro.some((m) => m.name === tags.name)) metro.push({ name: tags.name, ll: [lat, lon] });
+      continue;
+    }
+    const c = classify(tags);
+    if (!c) continue;
+    const name = tags.name || c.fallbackName;
+    const key = name.toLowerCase();
+    if (seenNames.has(key) && hav(seenNames.get(key), [lat, lon]) < 500) continue;
+    seenNames.set(key, [lat, lon]);
+    const g = GENERIC[c.g];
+    points.push({
+      id: 'osm' + e.type[0] + e.id, name, type: c.type, label: c.label, ll: [lat, lon], moods: c.moods, base: c.base,
+      evening: !!c.evening, big: !!c.big, osm: true,
+      hint: g.hint,
+      desc: tags.description && tags.description.length > 20 ? tags.description : g.desc,
+      todo: g.todo,
+      meta: 'По данным OpenStreetMap' + (tags.opening_hours ? ' · Часы: ' + tags.opening_hours : '')
+    });
+  }
+  return { points, metro };
+}
+
 /* ================= Кафе из OpenStreetMap ================= */
 async function findFood(ll, radius) {
   const q = '[out:json][timeout:12];(node["amenity"~"^(cafe|restaurant|ice_cream|fast_food)$"]["name"](around:' + radius + ',' + ll[0] + ',' + ll[1] + ');way["amenity"~"^(cafe|restaurant)$"]["name"](around:' + radius + ',' + ll[0] + ',' + ll[1] + '););out center 60;';
-  const res = await fetchTimeout(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 12000);
-  if (!res.ok) throw new Error('overpass ' + res.status);
-  const data = await res.json();
+  const data = await overpass(q, 12000);
   const typeName = { cafe: 'Кафе', restaurant: 'Ресторан', ice_cream: 'Мороженое', fast_food: 'Перекус' };
   return data.elements
     .map((e) => {
@@ -678,7 +785,7 @@ function darkNow() {
 function ensureMap() {
   if (map) { setTimeout(() => map.invalidateSize(), 50); return; }
   map = L.map('map', { zoomControl: false, attributionControl: true });
-  map.attributionControl.setPosition('topright');
+  map.attributionControl.setPosition('topleft');
   tileLayer = L.tileLayer(TILES, {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
@@ -741,7 +848,7 @@ async function drawRoute(fit) {
 }
 function updateMe() {
   if (!map) return;
-  const pos = S.useGps && S.gps ? S.gps : null;
+  const pos = S.gps;
   if (!pos) { if (meMarker) { meMarker.remove(); meMarker = null; } return; }
   if (!meMarker) meMarker = L.marker(pos, { icon: L.divIcon({ html: '<div class="me"></div>', className: '', iconSize: [22, 22], iconAnchor: [11, 11] }), interactive: false, zIndexOffset: 1000 }).addTo(map);
   else meMarker.setLatLng(pos);
@@ -750,10 +857,11 @@ function startWatch() {
   if (!('geolocation' in navigator) || watchId !== null) return;
   watchId = navigator.geolocation.watchPosition((p) => {
     S.gps = [p.coords.latitude, p.coords.longitude];
-    if (!S.useGps) return;
     updateMe();
+    if (!S.useGps) return;
     const t = S.targets[S.idx];
-    if (t && S.mode === 'next' && !S.openedCard && hav(S.gps, t.ll) < ARRIVE_RADIUS) arrive();
+    const radius = t && t.big ? 150 : ARRIVE_RADIUS;
+    if (t && S.mode === 'next' && !S.openedCard && hav(S.gps, t.ll) < radius) arrive();
     else if (!S.openedCard && S.mode === 'next') renderSheet();
   }, () => {}, { enableHighAccuracy: true, maximumAge: 5000 });
 }
@@ -762,11 +870,32 @@ function stopWatch() { if (watchId !== null) { navigator.geolocation.clearWatch(
 /* ================= Запуск прогулки ================= */
 $('go').addEventListener('click', async () => {
   $('go').disabled = true;
-  if (!S.gps && !S.gpsAsked) await askLocation();
-  const real = S.gps && inArea(S.gps);
-  S.useGps = !!real;
-  S.start = real ? { ll: S.gps, name: 'Старт', demo: false } : { ...DEMO_START, demo: true };
-  if (!real) toast(S.gps ? 'Вы далеко от Замоскворечья — показываем демо' : 'Место не определилось — показываем демо');
+  if (!S.gps) await askLocation();
+  S.start = null;
+  if (S.gps && inArea(S.gps)) {
+    // Замоскворечье: наши места с описаниями
+    POINTS = CURATED; METRO = CENTER_METRO;
+    S.start = { ll: S.gps, name: 'Старт', demo: false };
+  } else if (S.gps) {
+    // Любой другой район: собираем места вокруг из OpenStreetMap
+    loading(true, 'Ищем интересные места вокруг…');
+    try {
+      const found = await discover(S.gps, DISCOVER_RADIUS[S.time]);
+      if (found.points.length >= 2) {
+        POINTS = found.points; METRO = found.metro;
+        S.start = { ll: S.gps, name: 'Старт', demo: false, osm: true };
+        if (S.finish === 'metro' && !METRO.length) toast('Рядом не нашли метро — закончим там, где получится');
+      } else {
+        toast('Вокруг почти нет отмеченных мест — показываем демо по Замоскворечью');
+      }
+    } catch (e) {
+      toast('Не получилось загрузить места вокруг — показываем демо по Замоскворечью');
+    }
+  } else {
+    toast('Место не определилось — показываем демо');
+  }
+  if (!S.start) { POINTS = CURATED; METRO = CENTER_METRO; S.start = { ...DEMO_START, demo: true }; }
+  S.useGps = !S.start.demo;
   S.from = S.start.ll; S.idx = 0; S.trail = []; S.visited = []; S.skipped = new Set(); S.walkedM = 0; S.mode = 'next'; S.openedCard = null;
   loading(true, 'Строим прогулку…');
   try {
@@ -786,7 +915,7 @@ $('go').addEventListener('click', async () => {
     showScreen('walk');
     ensureMap();
     map.setView(S.from, 15);
-    updateMe(); if (S.useGps) startWatch();
+    updateMe(); if (S.gps) startWatch();
     drawMarkers();
     renderSheet();
     await drawRoute(true);
@@ -875,6 +1004,12 @@ function renderSheet() {
   if ($('foodBtn')) $('foodBtn').onclick = wantFood;
 }
 
+$('locBtn').addEventListener('click', async () => {
+  if (!S.gps) await askLocation();
+  if (S.gps) { updateMe(); startWatch(); map.setView(S.gps, Math.max(map.getZoom(), 16)); }
+  else toast('Не получилось определить место. Проверьте, разрешён ли доступ к геопозиции');
+});
+
 $('backBtn').addEventListener('click', () => {
   if (S.openedCard) { closeCard(); return; }
   S.mode = S.mode === 'exit' ? 'next' : 'exit'; renderSheet();
@@ -958,6 +1093,8 @@ function openCard(t, review) {
     '<div style="display:flex;flex-direction:column;gap:6px"><h1>' + esc(t.name) + '</h1><div class="card-meta">' + esc((t.label ? t.label + ' · ' : '') + (meta || '')) + '</div></div>' +
     (t.desc ? '<p class="card-desc">' + esc(t.desc) + '</p>' : '<p class="card-desc">Отличное место, чтобы передохнуть. Когда будете готовы, идём дальше.</p>') +
     (t.todo ? '<div style="display:flex;flex-direction:column;gap:8px"><div class="group"><h2>Чем заняться</h2></div><ul class="todo">' + t.todo.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul></div>' : '') +
+    '<a class="ext-link" href="https://yandex.ru/maps/?text=' + encodeURIComponent(t.name) + '&ll=' + t.ll[1].toFixed(6) + '%2C' + t.ll[0].toFixed(6) + '&z=17" target="_blank" rel="noopener">Фото и отзывы в Яндекс Картах' +
+      '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg></a>' +
     '<div class="actions">' +
       '<button type="button" class="ghost save" id="saveBtn" aria-pressed="' + isSaved + '">' + ICON.heart + '<span id="saveLabel">' + (isSaved ? 'Сохранено' : 'Сохранить') + '</span></button>' +
       '<button type="button" class="primary" id="nextBtn">' + (review ? 'Закрыть' : 'Идём дальше') + ICON.arrow + '</button>' +
@@ -993,7 +1130,7 @@ function finishWalk() {
   $('finishInner').innerHTML =
     '<div class="brand"><div class="brand-mark"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-5 2V6l5-2 6 2 5-2v14l-5 2-6-2z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg></div><span class="brand-name">Куда дальше?</span></div>' +
     '<div class="hero"><h1>' + (n ? 'Хорошо погуляли!' : 'Прогулка окончена') + '</h1><p>' + (n ? 'Вот что вы открыли за эту прогулку.' : 'В этот раз не дошли ни до одной точки. Попробуем ещё?') + '</p></div>' +
-    '<div class="stats"><div class="stat"><b>' + km + '</b><span>км пройдено</span></div><div class="stat"><b>' + n + '</b><span>' + plural(n, 'место', 'места', 'мест') + '</span></div><div class="stat"><b>' + mins + '</b><span>минут</span></div></div>' +
+    '<div class="stats"><div class="stat"><b>' + km + '</b><span>км пройдено</span></div><div class="stat"><b>' + n + '</b><span>' + plural(n, 'место', 'места', 'мест') + '</span></div><div class="stat"><b>' + mins + '</b><span>' + plural(mins, 'минута', 'минуты', 'минут') + '</span></div></div>' +
     (n ? '<ul class="visited">' + list + '</ul>' : '') +
     '<div class="start-foot">' + (n ? '<button type="button" class="ghost" id="shareBtn" style="min-height:56px;border-radius:18px">Поделиться прогулкой</button>' : '') +
     '<button type="button" class="primary" id="againBtn">Новая прогулка' + ICON.arrow + '</button></div>';
