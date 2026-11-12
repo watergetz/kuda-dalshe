@@ -1,14 +1,14 @@
 {
- "updated": "2026-11-12T16:29:20.322146+00:00",
- "places": 9869,
+ "updated": "2026-11-12T16:54:40.561657+00:00",
+ "places": 9788,
  "metro": 242,
- "tiles": 947,
+ "tiles": 946,
  "tileLat": 0.02,
  "tileLon": 0.04,
  "groups": {
   "culture": 1004,
   "worship": 1345,
-  "history": 1083,
+  "history": 1002,
   "attraction": 518,
   "monument": 1888,
   "view": 245,
@@ -19,9 +19,9 @@
   "water": 762
  },
  "described": {
-  "wikipedia": 1110,
-  "osm_description": 277,
-  "osm_facts": 1408,
-  "total": 9869
+  "wikipedia": 1602,
+  "osm_description": 267,
+  "osm_facts": 1404,
+  "total": 9788
  }
 }
