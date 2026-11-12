@@ -99,6 +99,13 @@ def place_facts(t, g):
     return ' '.join(out)
 
 
+FOOD = {'cafe': 'c', 'restaurant': 'r', 'ice_cream': 'i', 'fast_food': 'f'}
+
+
+def is_food(t):
+    return t.get('amenity') in FOOD and t.get('name') and t.get('access') != 'private'
+
+
 def is_metro(t):
     return t.get('railway') == 'station' and t.get('station') == 'subway' and t.get('name')
 
@@ -133,7 +140,7 @@ def collect(path):
         if obj.is_relation():
             continue
         tags = dict(obj.tags)
-        if not (classify(tags) or is_metro(tags)):
+        if not (classify(tags) or is_metro(tags) or is_food(tags)):
             continue
         if obj.is_node():
             if not obj.location.valid():
@@ -162,7 +169,7 @@ def main():
     found = collect(sys.argv[1])
     print('Найдено подходящих объектов:', len(found))
 
-    places, metro, seen = [], [], {}
+    places, metro, food, seen = [], [], [], {}
     for oid, t, lat, lon in found:
         if not in_bbox(lat, lon):
             continue
@@ -171,6 +178,13 @@ def main():
             if not any(m['n'] == t['name'] and hav(m['a'], ll) < 1000 for m in metro):
                 metro.append({'n': t['name'], 'a': ll})
             continue
+        if is_food(t):
+            f = {'n': t['name'], 'a': ll, 't': FOOD[t['amenity']]}
+            if t.get('cuisine'):
+                f['k'] = t['cuisine'][:60]
+            if t.get('opening_hours'):
+                f['h'] = t['opening_hours'][:120]
+            food.append(f)
         c = classify(t)
         if not c:
             continue
@@ -213,16 +227,25 @@ def main():
     for k, lst in tiles.items():
         with open('data/places/%s.json' % k, 'w', encoding='utf-8') as f:
             json.dump(lst, f, ensure_ascii=False, separators=(',', ':'))
+    food_tiles = {}
+    for f in food:
+        k = '%d_%d' % (math.floor(f['a'][0] / TILE_LAT), math.floor(f['a'][1] / TILE_LON))
+        food_tiles.setdefault(k, []).append(f)
+    shutil.rmtree('data/food', ignore_errors=True)
+    os.makedirs('data/food', exist_ok=True)
+    for k, lst in food_tiles.items():
+        with open('data/food/%s.json' % k, 'w', encoding='utf-8') as fh:
+            json.dump(lst, fh, ensure_ascii=False, separators=(',', ':'))
     with open('data/metro.json', 'w', encoding='utf-8') as f:
         json.dump(metro, f, ensure_ascii=False, separators=(',', ':'))
     groups = {}
     for p in places:
         groups[p['g']] = groups.get(p['g'], 0) + 1
     info = {'updated': datetime.now(timezone.utc).isoformat(), 'places': len(places), 'metro': len(metro),
-            'tiles': len(tiles), 'tileLat': TILE_LAT, 'tileLon': TILE_LON, 'groups': groups}
+            'tiles': len(tiles), 'tileLat': TILE_LAT, 'tileLon': TILE_LON, 'groups': groups, 'food': len(food)}
     with open('data/info.json', 'w', encoding='utf-8') as f:
         json.dump(info, f, ensure_ascii=False, indent=1)
-    print('Готово: %d мест, %d станций метро, %d квадратов' % (len(places), len(metro), len(tiles)))
+    print('Готово: %d мест, %d станций метро, %d кафе и ресторанов, %d квадратов' % (len(places), len(metro), len(food), len(tiles)))
     print('По видам:', groups)
 
 

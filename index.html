@@ -22,6 +22,7 @@
   --on-accent: #FFFFFF;
   --accent-soft: rgba(184, 35, 90, 0.09);
   --user: #2563EB;
+  --ok: #1F7A4D;
   --shadow: rgba(27, 26, 34, 0.14);
   --tile-filter: saturate(0.3) sepia(0.12) brightness(1.03) contrast(0.95);
   --font-display: "Unbounded", "Manrope", system-ui, sans-serif;
@@ -32,14 +33,14 @@
   :root:not([data-theme="light"]) {
     --bg: #16151B; --surface: #22212A; --ink: #F3F0EA; --muted: #A9A5B2; --line: #36343F;
     --accent: #E8608C; --on-accent: #1A0E13; --accent-soft: rgba(232, 96, 140, 0.14);
-    --user: #5B8CFF; --shadow: rgba(0, 0, 0, 0.45); color-scheme: dark;
+    --user: #5B8CFF; --ok: #5FD39A; --shadow: rgba(0, 0, 0, 0.45); color-scheme: dark;
     --tile-filter: invert(1) hue-rotate(180deg) brightness(0.88) contrast(0.88) saturate(0.35);
   }
 }
 :root[data-theme="dark"] {
   --bg: #16151B; --surface: #22212A; --ink: #F3F0EA; --muted: #A9A5B2; --line: #36343F;
   --accent: #E8608C; --on-accent: #1A0E13; --accent-soft: rgba(232, 96, 140, 0.14);
-  --user: #5B8CFF; --shadow: rgba(0, 0, 0, 0.45); color-scheme: dark;
+  --user: #5B8CFF; --ok: #5FD39A; --shadow: rgba(0, 0, 0, 0.45); color-scheme: dark;
   --tile-filter: invert(1) hue-rotate(180deg) brightness(0.88) contrast(0.88) saturate(0.35);
 }
 
@@ -177,6 +178,8 @@ h1, h2 { text-wrap: balance; }
 .food-item b { display: block; font-size: 15px; font-weight: 800; }
 .food-item span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 .food-item .fi-text { flex: 1; min-width: 0; }
+.food-item .open-yes { color: var(--ok); font-weight: 700; }
+.food-item .open-no { color: var(--muted); font-weight: 700; }
 .badge {
   align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
   background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 800;
@@ -307,7 +310,7 @@ h1, h2 { text-wrap: balance; }
       <button id="demoBtn" class="ghost" type="button">Посмотреть демо по Замоскворечью</button>
       <p class="note">Маршрут строится от того места, где вы сейчас. В Замоскворечье — места с нашими описаниями, в других районах — интересные места из OpenStreetMap.</p>
       <p class="note" id="diag" hidden style="text-align:left;user-select:text;-webkit-user-select:text"></p>
-      <p class="note" id="version">Версия 10 · 12 ноября</p>
+      <p class="note" id="version">Версия 11 · 12 ноября</p>
     </div>
   </div>
 </section>
@@ -667,9 +670,60 @@ function plan(fromLL, budget, startLL, exclude) {
     }
     if (!best || score > best.score) best = { route, score };
   }
-  const last = best.route.length ? best.route[best.route.length - 1].ll : fromLL;
-  const end = endFor(last, startLL);
-  return { points: best.route.map((p) => ({ ...p, kind: 'point' })), end };
+  const ordered = orderRoute(fromLL, best.route, startLL);
+  return { points: ordered.points.map((p) => ({ ...p, kind: 'point' })), end: ordered.end };
+}
+
+// Лучший порядок обхода выбранных мест: перебираем все варианты (метод Хелда — Карпа),
+// чтобы маршрут не петлял и не возвращался той же дорогой. Финиш у метро выбираем тот, к которому удобнее выйти.
+function shortestOrder(fromLL, pts, endLL) {
+  const n = pts.length;
+  if (n <= 1) return { order: pts.map((_, i) => i), cost: n ? hav(fromLL, pts[0].ll) + (endLL ? hav(pts[0].ll, endLL) : 0) : 0 };
+  const full = (1 << n) - 1;
+  const dp = Array.from({ length: 1 << n }, () => new Float64Array(n).fill(Infinity));
+  const prev = Array.from({ length: 1 << n }, () => new Int8Array(n).fill(-1));
+  const d = pts.map((a) => pts.map((b) => hav(a.ll, b.ll)));
+  for (let j = 0; j < n; j++) dp[1 << j][j] = hav(fromLL, pts[j].ll);
+  for (let mask = 1; mask <= full; mask++) {
+    for (let j = 0; j < n; j++) {
+      const cur = dp[mask][j];
+      if (cur === Infinity || !(mask & (1 << j))) continue;
+      for (let k = 0; k < n; k++) {
+        if (mask & (1 << k)) continue;
+        const nm = mask | (1 << k), v = cur + d[j][k];
+        if (v < dp[nm][k]) { dp[nm][k] = v; prev[nm][k] = j; }
+      }
+    }
+  }
+  let bestJ = 0, bestCost = Infinity;
+  for (let j = 0; j < n; j++) {
+    const v = dp[full][j] + (endLL ? hav(pts[j].ll, endLL) : 0);
+    if (v < bestCost) { bestCost = v; bestJ = j; }
+  }
+  const order = [];
+  for (let mask = full, j = bestJ; j !== -1;) { order.push(j); const pj = prev[mask][j]; mask &= ~(1 << j); j = pj; }
+  return { order: order.reverse(), cost: bestCost };
+}
+function orderRoute(fromLL, pts, startLL) {
+  if (!pts.length) return { points: [], end: endFor(fromLL, startLL) };
+  if (S.finish === 'back') {
+    const r = shortestOrder(fromLL, pts, startLL);
+    return { points: r.order.map((i) => pts[i]), end: { ll: startLL, name: 'Возвращаемся к началу', kind: 'end' } };
+  }
+  if (S.finish === 'metro' && METRO.length) {
+    // несколько станций рядом с выбранными местами — берём ту, с которой вся прогулка короче
+    const cx = [pts.reduce((s, p) => s + p.ll[0], 0) / pts.length, pts.reduce((s, p) => s + p.ll[1], 0) / pts.length];
+    const near = METRO.slice().sort((a, b) => hav(cx, a.ll) - hav(cx, b.ll)).slice(0, 3);
+    pts.forEach((p) => { const m = nearestMetro(p.ll); if (m && !near.includes(m)) near.push(m); });
+    let best = null;
+    for (const m of near) {
+      const r = shortestOrder(fromLL, pts, m.ll);
+      if (!best || r.cost < best.r.cost) best = { r, m };
+    }
+    return { points: best.r.order.map((i) => pts[i]), end: { ll: best.m.ll, name: 'м. ' + best.m.name, kind: 'end' } };
+  }
+  const r = shortestOrder(fromLL, pts, null);
+  return { points: r.order.map((i) => pts[i]), end: null };
 }
 
 /* ================= Запросы к OpenStreetMap ================= */
@@ -922,12 +976,105 @@ async function discover(ll, radius) {
   return { points, metro };
 }
 
-/* ================= Кафе из OpenStreetMap ================= */
+/* ================= Кафе: открыто ли сейчас (по часам из OpenStreetMap) ================= */
+const OH_DAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+function ohDays(part) {
+  const set = new Set();
+  for (const seg of part.split(',')) {
+    const [a, b] = seg.split('-');
+    const i = OH_DAYS.indexOf(a), j = b ? OH_DAYS.indexOf(b) : i;
+    if (i < 0 || j < 0) return null;
+    for (let k = i; ; k = (k + 1) % 7) { set.add(k); if (k === j) break; }
+  }
+  return set;
+}
+// true — открыто, false — закрыто, null — не удалось понять (тогда честно пишем часы как есть)
+function openNow(oh, date) {
+  if (!oh) return null;
+  const s = oh.trim();
+  if (s === '24/7') return true;
+  const d = date || new Date();
+  const today = (d.getDay() + 6) % 7, yesterday = (today + 6) % 7, mins = d.getHours() * 60 + d.getMinutes();
+  let state = null;
+  for (const raw of s.split(';')) {
+    const rule = raw.trim();
+    if (!rule || /^(PH|SH)\b/.test(rule)) continue; // праздники и каникулы пропускаем
+    const m = rule.match(/^((?:Mo|Tu|We|Th|Fr|Sa|Su)(?:[-,](?:Mo|Tu|We|Th|Fr|Sa|Su))*)?\s*(.*)$/);
+    const days = m[1] ? ohDays(m[1]) : new Set([0, 1, 2, 3, 4, 5, 6]);
+    const times = m[2].trim();
+    if (!days) return null;
+    if (/^(off|closed)$/i.test(times)) { if (days.has(today)) state = false; continue; }
+    if (times === '24/7' || times === '00:00-24:00') { if (days.has(today)) state = true; continue; }
+    const ranges = [...times.matchAll(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g)];
+    if (!ranges.length || times.replace(/[\d:\s,-]/g, '') !== '') return null; // PH, sunrise и прочие сложные случаи
+    let openHere = false;
+    for (const r of ranges) {
+      const from = +r[1] * 60 + +r[2], to = +r[3] * 60 + +r[4];
+      if (to > from) { if (days.has(today) && mins >= from && mins < to) openHere = true; }
+      else if ((days.has(today) && mins >= from) || (days.has(yesterday) && mins < to)) openHere = true; // работает за полночь
+    }
+    if (days.has(today) || openHere) state = openHere;
+  }
+  return state;
+}
+const CUISINE = {
+  coffee_shop: 'кофейня', italian: 'итальянская кухня', georgian: 'грузинская кухня', japanese: 'японская кухня', sushi: 'суши',
+  pizza: 'пицца', burger: 'бургеры', russian: 'русская кухня', asian: 'азиатская кухня', chinese: 'китайская кухня',
+  uzbek: 'узбекская кухня', caucasian: 'кавказская кухня', french: 'французская кухня', european: 'европейская кухня',
+  international: 'разная кухня', regional: 'местная кухня', american: 'американская кухня', korean: 'корейская кухня',
+  vietnamese: 'вьетнамская кухня', thai: 'тайская кухня', indian: 'индийская кухня', mexican: 'мексиканская кухня',
+  armenian: 'армянская кухня', pancake: 'блины', bakery: 'выпечка', cake: 'торты', dessert: 'десерты', ice_cream: 'мороженое',
+  tea: 'чай', shawarma: 'шаурма', kebab: 'кебаб', chicken: 'курица', sandwich: 'сэндвичи', ramen: 'рамен', noodle: 'лапша',
+  seafood: 'морепродукты', steak_house: 'стейки', vegetarian: 'вегетарианская', vegan: 'веганская', breakfast: 'завтраки', wine: 'вино'
+};
+function cuisineText(c) {
+  return c ? c.split(';').slice(0, 2).map((x) => CUISINE[x.trim()] || x.trim().replace(/_/g, ' ')).join(', ') : '';
+}
+const FOOD_TYPE = { c: 'Кафе', r: 'Ресторан', i: 'Мороженое', f: 'Перекус' };
+function sortFood(list, ll) {
+  list.forEach((f) => { f.open = openNow(f.hours); });
+  const rankOpen = (f) => (f.open === true ? 0 : f.open === null ? 1 : 2);
+  return list.sort((a, b) => (rankOpen(a) - rankOpen(b)) || (a.rank - b.rank) || (hav(ll, a.ll) - hav(ll, b.ll)));
+}
+const foodTileCache = new Map();
+let infoPromise = null;
+function loadInfo() {
+  if (!infoPromise) infoPromise = fetchJson('data/info.json').catch((e) => { infoPromise = null; throw e; });
+  return infoPromise;
+}
+// Кафе рядом: сначала из файлов, которые раз в неделю собирает робот, иначе — напрямую из OpenStreetMap
 async function findFood(ll, radius) {
-  const q = '[out:json][timeout:12];(node["amenity"~"^(cafe|restaurant|ice_cream|fast_food)$"]["name"](around:' + radius + ',' + ll[0] + ',' + ll[1] + ');way["amenity"~"^(cafe|restaurant)$"]["name"](around:' + radius + ',' + ll[0] + ',' + ll[1] + '););out center 60;';
+  try {
+    const info = await loadInfo();
+    if (!info.food) throw new Error('no food yet');
+    const dLat = radius / 111320, dLon = radius / (111320 * Math.cos(rad(ll[0])));
+    const keys = [];
+    for (let a = Math.floor((ll[0] - dLat) / TILE_LAT); a <= Math.floor((ll[0] + dLat) / TILE_LAT); a++) {
+      for (let b = Math.floor((ll[1] - dLon) / TILE_LON); b <= Math.floor((ll[1] + dLon) / TILE_LON); b++) keys.push(a + '_' + b);
+    }
+    const lists = await Promise.all(keys.map((k) => {
+      if (!foodTileCache.has(k)) {
+        foodTileCache.set(k, fetchJson('data/food/' + k + '.json').catch((e) => {
+          if (e.message === '404') return [];
+          foodTileCache.delete(k); throw e;
+        }));
+      }
+      return foodTileCache.get(k);
+    }));
+    const list = lists.flat().filter((f) => hav(ll, f.a) <= radius).map((f) => ({
+      id: 'food' + f.a.join('_'), kind: 'food', type: 'food', name: f.n, ll: f.a, label: FOOD_TYPE[f.t] || 'Кафе',
+      cuisine: cuisineText(f.k), hours: f.h || '', rank: f.t === 'f' ? 1 : 0
+    }));
+    return sortFood(list, ll);
+  } catch (e) {
+    return findFoodLive(ll, radius);
+  }
+}
+async function findFoodLive(ll, radius) {
+  const q ='[out:json][timeout:12];(node["amenity"~"^(cafe|restaurant|ice_cream|fast_food)$"]["name"](around:' + radius + ',' + ll[0] + ',' + ll[1] + ');way["amenity"~"^(cafe|restaurant)$"]["name"](around:' + radius + ',' + ll[0] + ',' + ll[1] + '););out center 60;';
   const data = await overpass(q, 12000);
   const typeName = { cafe: 'Кафе', restaurant: 'Ресторан', ice_cream: 'Мороженое', fast_food: 'Перекус' };
-  return data.elements
+  const list = data.elements
     .map((e) => {
       const lat = e.lat ?? (e.center && e.center.lat), lon = e.lon ?? (e.center && e.center.lon);
       if (lat == null) return null;
@@ -935,13 +1082,13 @@ async function findFood(ll, radius) {
       return {
         id: 'osm' + e.id, kind: 'food', type: 'food', name: tags.name, ll: [lat, lon],
         label: typeName[tags.amenity] || 'Кафе',
-        cuisine: tags.cuisine ? tags.cuisine.split(';').slice(0, 2).join(', ').replace(/_/g, ' ') : '',
+        cuisine: cuisineText(tags.cuisine),
         hours: tags.opening_hours || '',
         rank: tags.amenity === 'fast_food' ? 1 : 0
       };
     })
-    .filter(Boolean)
-    .sort((a, b) => (a.rank - b.rank) || (hav(ll, a.ll) - hav(ll, b.ll)));
+    .filter(Boolean);
+  return sortFood(list, ll);
 }
 
 /* ================= Пешеходные отрезки ================= */
@@ -1116,7 +1263,7 @@ async function buildWalk() {
     if (S.mood === 'food') {
       const midIdx = Math.max(0, Math.floor(p.points.length / 2) - 1);
       try {
-        const foods = await findFood(p.points[midIdx].ll, 300);
+        const foods = (await findFood(p.points[midIdx].ll, 400)).filter((f) => f.open !== false);
         if (foods.length) S.targets.splice(midIdx + 1, 0, foods[0]);
         else toast('Рядом с маршрутом не нашли кафе');
       } catch (e) { toast('Не получилось загрузить кафе, попробуйте кнопку «Хотим поесть» позже'); }
@@ -1179,10 +1326,11 @@ function renderSheet() {
     return;
   }
   if (S.mode === 'food') {
-    const list = S.foodOptions.slice(0, 4).map((f, k) =>
+    const openLabel = (f) => (f.open === true ? '<span class="open-yes">Открыто сейчас</span>' : f.open === false ? '<span class="open-no">Сейчас закрыто</span>' : (f.hours ? '<span>Часы: ' + esc(f.hours) + '</span>' : '<span>Часы работы неизвестны</span>'));
+    const list = S.foodOptions.slice(0, 5).map((f, k) =>
       '<button type="button" class="food-item" data-k="' + k + '"><span class="fi-text"><b>' + esc(f.name) + '</b><span>' + esc(f.label) + (f.cuisine ? ' · ' + esc(f.cuisine) : '') + ' · ' + fmtDist(hav(here, f.ll)) + '</span>' +
-      (f.hours ? '<span>Часы по OSM: ' + esc(f.hours) + '</span>' : '') + '</span>' + ICON.arrow.replace('stroke-width', 'stroke="currentColor" stroke-width') + '</button>').join('');
-    box.innerHTML = '<div class="grab"></div><h1>Куда зайдём поесть?</h1><p>Ближайшие места по данным OpenStreetMap. Перед походом лучше проверить, открыто ли.</p>' +
+      openLabel(f) + '</span>' + ICON.arrow.replace('stroke-width', 'stroke="currentColor" stroke-width') + '</button>').join('');
+    box.innerHTML = '<div class="grab"></div><h1>Куда зайдём поесть?</h1><p>Ближайшие места по данным OpenStreetMap, открытые сейчас — первыми. Часы работы там иногда устаревают.</p>' +
       '<div class="food-list">' + (list || '<p>Рядом ничего не нашли.</p>') + '</div><button type="button" class="ghost" id="foodCancel">Не сейчас</button>';
     box.querySelectorAll('.food-item').forEach((b) => b.onclick = () => addFood(S.foodOptions[Number(b.dataset.k)]));
     $('foodCancel').onclick = () => { S.mode = 'next'; renderSheet(); };
@@ -1252,7 +1400,7 @@ async function wantFood() {
   const here = S.useGps && S.gps ? S.gps : S.from;
   loading(true, 'Ищем, где поесть…');
   try {
-    S.foodOptions = await findFood(here, 450);
+    S.foodOptions = await findFood(here, 600);
     S.mode = 'food'; renderSheet();
   } catch (e) {
     toast('Не получилось загрузить кафе. Проверьте интернет и попробуйте ещё раз');
