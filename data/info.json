@@ -1,12 +1,12 @@
 {
- "updated": "2026-11-12T14:54:13.625788+00:00",
- "places": 9966,
+ "updated": "2026-11-12T15:03:49.102600+00:00",
+ "places": 9869,
  "metro": 242,
- "tiles": 948,
+ "tiles": 947,
  "tileLat": 0.02,
  "tileLon": 0.04,
  "groups": {
-  "culture": 1101,
+  "culture": 1004,
   "worship": 1345,
   "history": 1083,
   "attraction": 518,
