@@ -61,6 +61,8 @@ def classify(t):
         return {'g': 'culture', 'l': label, 'b': 2}
     if t.get('amenity') == 'place_of_worship':
         return {'g': 'worship', 'l': 'Мечеть' if t.get('religion') == 'muslim' else 'Храм', 'b': 2} if n else None
+    if t.get('historic') in ('tomb', 'grave', 'cemetery') or t.get('amenity') == 'grave_yard':
+        return None  # могилы — не место для свидания
     if t.get('historic') in ('memorial', 'monument'):
         if t.get('memorial') in SKIP_MEMORIAL:
             return None

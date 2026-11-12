@@ -75,6 +75,52 @@ def summary(title):
     return {'title': data.get('titles', {}).get('canonical', t).replace('_', ' '), 'text': clean(ext)}
 
 
+STOP = {'храм', 'церковь', 'часовня', 'собор', 'парк', 'сквер', 'сад', 'пруд', 'пруды', 'озеро', 'памятник',
+        'улица', 'бульвар', 'имени', 'им', 'в', 'на', 'и', 'у', 'при', 'с', 'со', 'по', 'москва', 'москве',
+        'музей', 'театр', 'мемориал', 'монумент', 'скульптура', 'фонтан', 'усадьба', 'дом', 'в честь', 'святого', 'святой', 'святых'}
+
+
+def tokens(s):
+    s = s.lower().replace('ё', 'е')
+    s = re.sub(r'[^\w\s-]', ' ', s)
+    return [w for w in re.split(r'[\s-]+', s) if w and w not in STOP]
+
+
+FAMILIES = [('храм', 'церк', 'собор', 'часовн'), ('парк', 'сквер', 'сад'), ('пруд', 'озер'),
+            ('памятник', 'монумент', 'мемориал', 'скульптур', 'бюст'), ('музе',), ('театр',), ('усадьб',)]
+
+
+def same_kind(name, title):
+    """Если в названии места сказано, что это (храм, парк, пруд…), статья должна быть о том же."""
+    n, t = name.lower(), title.lower()
+    for fam in FAMILIES:
+        if any(f in n for f in fam):
+            return any(f in t for f in fam)
+    return True
+
+
+def same_name(name, title):
+    """Все значимые слова названия места есть в названии статьи (с учётом падежей — по первым 5 буквам)."""
+    if not same_kind(name, title):
+        return False
+    nt = [w for w in tokens(name) if len(w) >= 3]
+    if not nt or sum(len(w) for w in nt) < 6:
+        return False
+    tt = [w[:5] for w in tokens(title.split('(')[0])]
+    return all(w[:5] in tt for w in nt)
+
+
+def geo_match(p):
+    lat, lon = p['a']
+    url = ('https://ru.wikipedia.org/w/api.php?action=query&list=geosearch&format=json&gsradius=600&gslimit=20'
+           '&gscoord=%f%%7C%f' % (lat, lon))
+    data = get_json(url) or {}
+    for hit in (data.get('query') or {}).get('geosearch', []):
+        if same_name(p['n'], hit['title']):
+            return hit['title']
+    return None
+
+
 def main():
     files = sorted(glob.glob('data/places/*.json'))
     if not files:
@@ -88,6 +134,18 @@ def main():
     for p in places:
         if not p.get('w') and p.get('q') in q2t:
             p['w'] = q2t[p['q']]
+    # места без ссылки: ищем статьи Википедии рядом по координатам и берём только с совпадающим названием
+    lookup = [p for p in places if not p.get('w') and p['n'] != p['l'] and p['g'] not in ('fountain',)]
+    print('Ищу статьи рядом с местами без ссылки:', len(lookup))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        matches = list(pool.map(geo_match, lookup))
+    geo_found = 0
+    for p, title in zip(lookup, matches):
+        if title:
+            p['w'] = title
+            geo_found += 1
+    print('  нашлось по координатам и названию:', geo_found)
+
     titles = sorted({p['w'] for p in places if p.get('w')})
     print('Статей Википедии для загрузки:', len(titles))
 

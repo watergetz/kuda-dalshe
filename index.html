@@ -307,7 +307,7 @@ h1, h2 { text-wrap: balance; }
       <button id="demoBtn" class="ghost" type="button">Посмотреть демо по Замоскворечью</button>
       <p class="note">Маршрут строится от того места, где вы сейчас. В Замоскворечье — места с нашими описаниями, в других районах — интересные места из OpenStreetMap.</p>
       <p class="note" id="diag" hidden style="text-align:left;user-select:text;-webkit-user-select:text"></p>
-      <p class="note" id="version">Версия 9 · 12 ноября</p>
+      <p class="note" id="version">Версия 10 · 12 ноября</p>
     </div>
   </div>
 </section>
@@ -613,6 +613,22 @@ function endFor(ll, startLL) {
   if (S.finish === 'metro') { const m = nearestMetro(ll); return m ? { ll: m.ll, name: 'м. ' + m.name, kind: 'end' } : null; }
   return null;
 }
+// Территории, куда просто так не зайти: внутрь Кремля нужен билет. Башни оставляем — их видно снаружи.
+const CLOSED_AREAS = [
+  [[55.7495, 37.6125], [55.7520, 37.6138], [55.7546, 37.6170], [55.7544, 37.6200], [55.7527, 37.6216], [55.7497, 37.6238], [55.7487, 37.6133]]
+];
+function insidePoly(ll, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, xi] = poly[i], [yj, xj] = poly[j];
+    if ((yi > ll[0]) !== (yj > ll[0]) && ll[1] < (xj - xi) * (ll[0] - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function closedInside(p) {
+  if (/^могила/i.test(p.name)) return true; // могилы — не место для свидания
+  return !/башн/i.test(p.name) && CLOSED_AREAS.some((poly) => insidePoly(p.ll, poly));
+}
 function pointScore(p) {
   return p.base + (p.moods.includes(S.mood) ? 4 : 0) + (isEvening() && p.evening ? 1.5 : 0);
 }
@@ -620,7 +636,10 @@ function pointScore(p) {
 function plan(fromLL, budget, startLL, exclude) {
   const night = isNight();
   const reach = budget * SPEED / 1.7;
-  const cands = POINTS.filter((p) => !exclude.has(p.id) && !(night && p.dayOnly) && hav(fromLL, p.ll) < reach);
+  const all = POINTS.filter((p) => !exclude.has(p.id) && !(night && p.dayOnly) && hav(fromLL, p.ll) < reach && !closedInside(p));
+  // в маршрут берём только места с настоящим описанием; места с общим текстом — лишь если рядом почти ничего нет
+  const rich = all.filter((p) => p.rich !== false);
+  const cands = rich.length >= 4 ? rich : all;
   let best = null;
   for (let trial = 0; trial < 60; trial++) {
     let cur = fromLL, t = 0, score = 0;
@@ -757,6 +776,7 @@ function enrich(p) {
     if (e.evening) p.evening = true;
     p.base += e.boost ?? 1;
     p.curated = true;
+    p.rich = true;
   } else if (p.name === p.label) {
     p.base -= 0.7; // безымянные фонтаны и граффити — пореже
   }
@@ -808,6 +828,7 @@ async function preparedPlaces(ll, radius) {
       id: 'osm' + p.i, name: p.n, type: grp.type, label: p.l, ll: p.a, moods: grp.moods,
       base: p.b + (fromWiki ? 0.8 : 0) + (p.f ? 0.3 : 0),
       evening: !!p.e, big: !!p.B, osm: true, hint: gen.hint, desc, todo: gen.todo, wiki: p.w || '',
+      rich: fromWiki || !!p.d || !!p.f,
       meta: (fromWiki ? 'Описание: Википедия' : 'По данным OpenStreetMap') + (p.h ? ' · Часы: ' + p.h : '')
     }));
   }
@@ -893,6 +914,7 @@ async function discover(ll, radius) {
       evening: !!c.evening, big: !!c.big, osm: true,
       hint: g.hint,
       desc: tags.description && tags.description.length > 20 ? tags.description : g.desc,
+      rich: !!(tags.description && tags.description.length > 20),
       todo: g.todo,
       meta: 'По данным OpenStreetMap' + (tags.opening_hours ? ' · Часы: ' + tags.opening_hours : '')
     }));
@@ -1048,8 +1070,16 @@ async function startWalk(forceDemo) {
       if (!S.gps) await askLocation();
       if (!S.gps) { toast('Не получилось определить, где вы. Разрешите доступ к геопозиции или посмотрите демо'); return; }
       if (inArea(S.gps)) {
-        // Замоскворечье: наши места с описаниями
-        POINTS = CURATED; METRO = CENTER_METRO;
+        // Центр: наши места с описаниями плюс все остальные описанные места вокруг (без повторов)
+        let extra = [], extraMetro = [];
+        loading(true, 'Ищем интересные места вокруг…');
+        try {
+          const f = await findPlacesAround(S.gps, DISCOVER_RADIUS[S.time]);
+          extra = f.points.filter((p) => p.rich !== false && !CURATED.some((c) => hav(c.ll, p.ll) < 120));
+          extraMetro = f.metro.filter((m) => !CENTER_METRO.some((c) => c.name === m.name));
+        } catch (e) { /* без интернета хватит и наших мест */ }
+        loading(false);
+        POINTS = CURATED.concat(extra); METRO = CENTER_METRO.concat(extraMetro);
         S.start = { ll: S.gps, name: 'Старт', demo: false };
       } else {
         // Любой другой район: места вокруг из OpenStreetMap
