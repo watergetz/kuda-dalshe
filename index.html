@@ -304,7 +304,9 @@ h1, h2 { text-wrap: balance; }
         Построить прогулку
         <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
-      <p class="note">В Замоскворечье — места с нашими описаниями. В других районах соберём интересные места вокруг вас из OpenStreetMap.</p>
+      <button id="demoBtn" class="ghost" type="button">Посмотреть демо по Замоскворечью</button>
+      <p class="note">Маршрут строится от того места, где вы сейчас. В Замоскворечье — места с нашими описаниями, в других районах — интересные места из OpenStreetMap.</p>
+      <p class="note" id="version">Версия 4 · 12 ноября</p>
     </div>
   </div>
 </section>
@@ -669,11 +671,38 @@ const GENERIC = {
   monument: { hint: 'Впереди памятник. Узнаете его?', desc: 'Памятник или мемориал, отмеченный в OpenStreetMap.', todo: ['Прочитать надпись', 'Узнать, кому или чему он посвящён'] },
   history: { hint: 'Впереди место со своей историей.', desc: 'Историческое место, отмеченное в OpenStreetMap.', todo: ['Поискать табличку с историей места', 'Представить, как здесь было сто лет назад'] },
   fountain: { hint: 'Прислушайтесь: впереди шумит вода.', desc: 'Фонтан. Летом рядом с ним приятно посидеть.', todo: ['Посидеть рядом пару минут', 'Загадать желание'] },
-  attraction: { hint: 'Впереди местная достопримечательность.', desc: 'Место, которое в OpenStreetMap отмечено как интересное.', todo: ['Понять, чем оно примечательно', 'Сделать общее фото'] }
+  attraction: { hint: 'Впереди местная достопримечательность.', desc: 'Место, которое в OpenStreetMap отмечено как интересное.', todo: ['Понять, чем оно примечательно', 'Сделать общее фото'] },
+  street: { hint: 'Сверните на улицу без машин.', desc: 'Пешеходная улица: можно идти рядом и разговаривать, не перекрикивая дорогу.', todo: ['Пройти её из конца в конец', 'Найти, где можно присесть'] }
 };
+// Свои описания для мест, которые находятся в OpenStreetMap по названию
+const ENRICH = [
+  { match: /ч[её]рное озеро/i, near: [55.70, 37.93], hint: 'Идите к большому озеру на краю района.',
+    desc: 'Озеро на границе Некрасовки и Подмосковья. Вокруг него Москва и область благоустраивают большой парк с прогулочными дорожками и пешеходным мостом через воду в сторону Зенино.',
+    todo: ['Пройтись вдоль берега', 'Найти место, откуда лучше всего видно воду'] }
+];
+function enrich(p) {
+  const e = ENRICH.find((x) => x.match.test(p.name) && hav(x.near, p.ll) < 5000);
+  if (e) { p.hint = e.hint; p.desc = e.desc; p.todo = e.todo; p.base += 1; }
+  return p;
+}
+// Кэш найденных мест на неделю: при повторном запуске в том же месте работает быстрее и без сети
+async function discoverCached(ll, radius) {
+  const key = 'kd_disc_' + (Math.round(ll[0] * 200) / 200) + '_' + (Math.round(ll[1] * 200) / 200) + '_' + radius;
+  const cached = store(key);
+  try {
+    const fresh = await discover(ll, radius);
+    if (fresh.points.length) store(key, { at: Date.now(), data: fresh });
+    return fresh;
+  } catch (e) {
+    if (cached && Date.now() - cached.at < 7 * 864e5) { toast('Сеть не ответила — взяли места из прошлого раза'); return cached.data; }
+    throw e;
+  }
+}
 function classify(tags) {
   const n = tags.name || '';
   if (tags.access === 'private' || tags.railway) return null;
+  if (tags.highway === 'pedestrian') return { g: 'street', type: 'street', label: 'Пешеходная улица', moods: ['cozy', 'food'], base: 1.5 };
+  if (tags.man_made === 'water_tower') return { g: 'history', type: 'sight', label: 'Водонапорная башня', moods: ['odd'], base: 2, fallbackName: 'Водонапорная башня' };
   if (tags.leisure === 'park' || tags.leisure === 'garden') return { g: 'park', type: 'park', label: /сквер/i.test(n) ? 'Сквер' : (tags.leisure === 'garden' ? 'Сад' : 'Парк'), moods: ['cozy', 'pretty'], base: 2 };
   if (tags.natural === 'water') return { g: 'water', type: 'view', label: /озер/i.test(n) || tags.water === 'lake' ? 'Озеро' : 'Пруд', moods: ['pretty', 'cozy'], base: 2.5, evening: true, big: true };
   if (tags.tourism === 'viewpoint') return { g: 'view', type: 'view', label: 'Смотровая точка', moods: ['pretty'], base: 3, evening: true };
@@ -703,6 +732,8 @@ async function discover(ll, radius) {
     'nwr["historic"]["name"]' + a + ';' +
     'nwr["amenity"~"^(place_of_worship|arts_centre|theatre)$"]["name"]' + a + ';' +
     'node["amenity"="fountain"]' + a + ';' +
+    'way["highway"="pedestrian"]["name"]' + a + ';' +
+    'nwr["man_made"="water_tower"]' + a + ';' +
     'node["railway"="station"]["station"="subway"]["name"]' + a + ';' +
     ');out tags center 500;';
   const data = await overpass(q, 25000);
@@ -722,14 +753,14 @@ async function discover(ll, radius) {
     if (seenNames.has(key) && hav(seenNames.get(key), [lat, lon]) < 500) continue;
     seenNames.set(key, [lat, lon]);
     const g = GENERIC[c.g];
-    points.push({
+    points.push(enrich({
       id: 'osm' + e.type[0] + e.id, name, type: c.type, label: c.label, ll: [lat, lon], moods: c.moods, base: c.base,
       evening: !!c.evening, big: !!c.big, osm: true,
       hint: g.hint,
       desc: tags.description && tags.description.length > 20 ? tags.description : g.desc,
       todo: g.todo,
       meta: 'По данным OpenStreetMap' + (tags.opening_hours ? ' · Часы: ' + tags.opening_hours : '')
-    });
+    }));
   }
   return { points, metro };
 }
@@ -868,40 +899,48 @@ function startWatch() {
 function stopWatch() { if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; } }
 
 /* ================= Запуск прогулки ================= */
-$('go').addEventListener('click', async () => {
+$('go').addEventListener('click', () => startWalk(false));
+$('demoBtn').addEventListener('click', () => startWalk(true));
+
+async function startWalk(forceDemo) {
   $('go').disabled = true;
-  if (!S.gps) await askLocation();
-  S.start = null;
-  if (S.gps && inArea(S.gps)) {
-    // Замоскворечье: наши места с описаниями
-    POINTS = CURATED; METRO = CENTER_METRO;
-    S.start = { ll: S.gps, name: 'Старт', demo: false };
-  } else if (S.gps) {
-    // Любой другой район: собираем места вокруг из OpenStreetMap
-    loading(true, 'Ищем интересные места вокруг…');
-    try {
-      const found = await discover(S.gps, DISCOVER_RADIUS[S.time]);
-      if (found.points.length >= 2) {
+  try {
+    S.start = null;
+    if (forceDemo) {
+      POINTS = CURATED; METRO = CENTER_METRO;
+      S.start = { ...DEMO_START, demo: true };
+    } else {
+      if (!S.gps) await askLocation();
+      if (!S.gps) { toast('Не получилось определить, где вы. Разрешите доступ к геопозиции или посмотрите демо'); return; }
+      if (inArea(S.gps)) {
+        // Замоскворечье: наши места с описаниями
+        POINTS = CURATED; METRO = CENTER_METRO;
+        S.start = { ll: S.gps, name: 'Старт', demo: false };
+      } else {
+        // Любой другой район: места вокруг из OpenStreetMap
+        loading(true, 'Ищем интересные места вокруг…');
+        let found = null;
+        try { found = await discoverCached(S.gps, DISCOVER_RADIUS[S.time]); } catch (e) { found = null; }
+        loading(false);
+        if (!found) { toast('Сервис карт OpenStreetMap не ответил. Проверьте интернет и попробуйте ещё раз'); return; }
+        if (found.points.length < 2) { toast('Вокруг мало отмеченных мест. Выберите больше времени или посмотрите демо'); return; }
         POINTS = found.points; METRO = found.metro;
         S.start = { ll: S.gps, name: 'Старт', demo: false, osm: true };
         if (S.finish === 'metro' && !METRO.length) toast('Рядом не нашли метро — закончим там, где получится');
-      } else {
-        toast('Вокруг почти нет отмеченных мест — показываем демо по Замоскворечью');
       }
-    } catch (e) {
-      toast('Не получилось загрузить места вокруг — показываем демо по Замоскворечью');
     }
-  } else {
-    toast('Место не определилось — показываем демо');
-  }
-  if (!S.start) { POINTS = CURATED; METRO = CENTER_METRO; S.start = { ...DEMO_START, demo: true }; }
+    await buildWalk();
+  } finally { loading(false); $('go').disabled = false; }
+}
+
+async function buildWalk() {
   S.useGps = !S.start.demo;
   S.from = S.start.ll; S.idx = 0; S.trail = []; S.visited = []; S.skipped = new Set(); S.walkedM = 0; S.mode = 'next'; S.openedCard = null;
   loading(true, 'Строим прогулку…');
   try {
     const foodBudget = S.mood === 'food' ? DWELL.food : 0;
     const p = plan(S.from, S.time - foodBudget, S.start.ll, S.skipped);
-    if (!p.points.length) { loading(false); $('go').disabled = false; toast('Не нашли интересных мест рядом. Попробуйте больше времени'); return; }
+    if (!p.points.length) { toast('Не нашли интересных мест рядом. Попробуйте больше времени'); return; }
     S.targets = [...p.points, ...(p.end ? [p.end] : [])];
     if (S.mood === 'food') {
       const midIdx = Math.max(0, Math.floor(p.points.length / 2) - 1);
@@ -919,8 +958,8 @@ $('go').addEventListener('click', async () => {
     drawMarkers();
     renderSheet();
     await drawRoute(true);
-  } finally { loading(false); $('go').disabled = false; }
-});
+  } finally { loading(false); }
+}
 
 function showScreen(id) {
   ['start', 'walk', 'finish'].forEach((s) => { $(s).hidden = s !== id; });
