@@ -1,0 +1,21 @@
+{
+ "updated": "2026-11-12T14:43:16.454355+00:00",
+ "places": 6645,
+ "metro": 231,
+ "tiles": 247,
+ "tileLat": 0.02,
+ "tileLon": 0.04,
+ "groups": {
+  "culture": 908,
+  "worship": 785,
+  "history": 464,
+  "attraction": 353,
+  "monument": 1297,
+  "view": 166,
+  "fountain": 327,
+  "art": 1194,
+  "park": 524,
+  "street": 270,
+  "water": 357
+ }
+}
