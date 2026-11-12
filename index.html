@@ -307,7 +307,7 @@ h1, h2 { text-wrap: balance; }
       <button id="demoBtn" class="ghost" type="button">Посмотреть демо по Замоскворечью</button>
       <p class="note">Маршрут строится от того места, где вы сейчас. В Замоскворечье — места с нашими описаниями, в других районах — интересные места из OpenStreetMap.</p>
       <p class="note" id="diag" hidden style="text-align:left;user-select:text;-webkit-user-select:text"></p>
-      <p class="note" id="version">Версия 8 · 12 ноября</p>
+      <p class="note" id="version">Версия 9 · 12 ноября</p>
     </div>
   </div>
 </section>
@@ -801,10 +801,14 @@ async function preparedPlaces(ll, radius) {
   for (const p of lists.flat()) {
     if (hav(ll, p.a) > radius) continue;
     const grp = GROUP[p.g] || GROUP.attraction, gen = GENERIC[p.g] || GENERIC.attraction;
+    const fromWiki = p.ds === 'w';
+    // описание: из Википедии; иначе своё описание из OpenStreetMap или общее — плюс проверяемые факты (год, автор, надпись)
+    const desc = fromWiki ? p.d : ((p.d || gen.desc) + (p.f ? ' ' + p.f : ''));
     points.push(enrich({
-      id: 'osm' + p.i, name: p.n, type: grp.type, label: p.l, ll: p.a, moods: grp.moods, base: p.b,
-      evening: !!p.e, big: !!p.B, osm: true, hint: gen.hint, desc: p.d || gen.desc, todo: gen.todo, wiki: p.w || '',
-      meta: 'По данным OpenStreetMap' + (p.h ? ' · Часы: ' + p.h : '')
+      id: 'osm' + p.i, name: p.n, type: grp.type, label: p.l, ll: p.a, moods: grp.moods,
+      base: p.b + (fromWiki ? 0.8 : 0) + (p.f ? 0.3 : 0),
+      evening: !!p.e, big: !!p.B, osm: true, hint: gen.hint, desc, todo: gen.todo, wiki: p.w || '',
+      meta: (fromWiki ? 'Описание: Википедия' : 'По данным OpenStreetMap') + (p.h ? ' · Часы: ' + p.h : '')
     }));
   }
   const metro = metroAll.filter((m) => hav(ll, m.a) < radius + 1500).map((m) => ({ name: m.n, ll: m.a }));

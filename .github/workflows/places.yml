@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - 'scripts/build_places.py'
+      - 'scripts/add_descriptions.py'
       - '.github/workflows/places.yml'
 
 permissions:
@@ -40,6 +41,9 @@ jobs:
 
       - name: Достать интересные места
         run: python3 scripts/build_places.py moscow.osm.pbf
+
+      - name: Добавить описания из Википедии
+        run: python3 scripts/add_descriptions.py
 
       - name: Сохранить в репозиторий
         run: |

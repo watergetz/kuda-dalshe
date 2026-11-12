@@ -74,6 +74,29 @@ def classify(t):
     return None
 
 
+YEAR_WORD = {'park': 'Год открытия', 'culture': 'Год открытия', 'monument': 'Год установки', 'art': 'Год создания',
+             'fountain': 'Год постройки', 'worship': 'Год постройки', 'history': 'Год постройки', 'attraction': 'Год создания'}
+
+
+def place_facts(t, g):
+    """Короткие проверяемые факты из OpenStreetMap: год, автор, надпись, статус наследия."""
+    out = []
+    m = re.search(r'\b(1[0-9]{3}|20[0-9]{2})\b', t.get('start_date', ''))
+    if m and g in YEAR_WORD:
+        out.append('%s — %s.' % (YEAR_WORD[g], m.group(1)))
+    if t.get('architect'):
+        out.append('Архитектор — %s.' % t['architect'].replace(';', ', ').strip().rstrip('.'))
+    author = t.get('artist_name') or t.get('sculptor')
+    if author:
+        out.append('Автор — %s.' % author.replace(';', ', ').strip().rstrip('.'))
+    ins = ' '.join(t.get('inscription', '').split())
+    if 3 < len(ins) <= 160:
+        out.append('Надпись: «%s».' % ins.strip('«»"'))
+    if t.get('heritage') or t.get('heritage:ref') or t.get('ref:okn'):
+        out.append('Объект культурного наследия.')
+    return ' '.join(out)
+
+
 def is_metro(t):
     return t.get('railway') == 'station' and t.get('station') == 'subway' and t.get('name')
 
@@ -167,6 +190,12 @@ def main():
         w = t.get('wikipedia', '')
         if w.startswith('ru:'):
             p['w'] = w[3:]
+        q = t.get('wikidata', '')
+        if re.fullmatch(r'Q\d+', q):
+            p['q'] = q
+        facts = place_facts(t, c['g'])
+        if facts:
+            p['f'] = facts
         places.append(p)
 
     if len(places) < MIN_PLACES:
