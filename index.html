@@ -306,7 +306,8 @@ h1, h2 { text-wrap: balance; }
       </button>
       <button id="demoBtn" class="ghost" type="button">Посмотреть демо по Замоскворечью</button>
       <p class="note">Маршрут строится от того места, где вы сейчас. В Замоскворечье — места с нашими описаниями, в других районах — интересные места из OpenStreetMap.</p>
-      <p class="note" id="version">Версия 4 · 12 ноября</p>
+      <p class="note" id="diag" hidden style="text-align:left;user-select:text;-webkit-user-select:text"></p>
+      <p class="note" id="version">Версия 5 · 12 ноября</p>
     </div>
   </div>
 </section>
@@ -465,11 +466,15 @@ const DWELL = { view: 6, bridge: 5, sight: 5, street: 4, park: 10, food: 25 };
 const ARRIVE_RADIUS = 45;            // м: «вы на месте»
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const ROUTER = 'https://routing.openstreetmap.de/routed-foot/route/v1/foot/';
+// Несколько серверов с данными OpenStreetMap: спрашиваем все сразу и берём первый ответ
 const OVERPASS_URLS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
 ];
+let overpassReport = [];
 
 /* ================= Утилиты ================= */
 const $ = (id) => document.getElementById(id);
@@ -649,15 +654,33 @@ function plan(fromLL, budget, startLL, exclude) {
 
 /* ================= Запросы к OpenStreetMap ================= */
 async function overpass(q, ms) {
-  let lastErr = new Error('overpass unavailable');
-  for (const url of OVERPASS_URLS) {
+  const report = new Map();
+  const ctrls = [];
+  let done = false;
+  const tries = OVERPASS_URLS.map(async (base) => {
+    const host = new URL(base).host;
+    const ctrl = new AbortController(); ctrls.push(ctrl);
+    const timer = setTimeout(() => ctrl.abort(), ms || 20000);
     try {
-      const res = await fetchTimeout(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, ms || 15000);
-      if (res.ok) return await res.json();
-      lastErr = new Error('overpass ' + res.status);
-    } catch (e) { lastErr = e; }
+      const res = await fetch(base + '?data=' + encodeURIComponent(q), { signal: ctrl.signal });
+      if (!res.ok) { report.set(host, 'ответ ' + res.status + (res.status === 429 ? ' (слишком много запросов)' : res.status === 504 ? ' (сервер перегружен)' : '')); throw new Error('status'); }
+      const j = await res.json();
+      if (!j || !Array.isArray(j.elements)) { report.set(host, 'непонятный ответ'); throw new Error('format'); }
+      if (j.remark && !j.elements.length) { report.set(host, 'сервер не успел: ' + String(j.remark).slice(0, 60)); throw new Error('remark'); }
+      return j;
+    } catch (e) {
+      if (!done && !report.has(host)) report.set(host, e && e.name === 'AbortError' ? 'нет ответа за ' + Math.round((ms || 20000) / 1000) + ' с' : 'нет связи (сеть или запрет браузера)');
+      throw e;
+    } finally { clearTimeout(timer); }
+  });
+  try {
+    const j = await Promise.any(tries);
+    done = true; ctrls.forEach((c) => c.abort());
+    return j;
+  } catch (e) {
+    overpassReport = [...report].map(([h, r]) => h + ' — ' + r);
+    throw new Error('overpass unavailable');
   }
-  throw lastErr;
 }
 
 /* ================= Места вокруг вас (любой район) ================= */
@@ -922,7 +945,13 @@ async function startWalk(forceDemo) {
         let found = null;
         try { found = await discoverCached(S.gps, DISCOVER_RADIUS[S.time]); } catch (e) { found = null; }
         loading(false);
-        if (!found) { toast('Сервис карт OpenStreetMap не ответил. Проверьте интернет и попробуйте ещё раз'); return; }
+        if (!found) {
+          toast('Сервис карт OpenStreetMap не ответил. Попробуйте ещё раз через минуту');
+          const d = $('diag'); d.hidden = false;
+          d.textContent = 'Что ответили серверы: ' + (overpassReport.join('; ') || 'нет данных');
+          return;
+        }
+        $('diag').hidden = true;
         if (found.points.length < 2) { toast('Вокруг мало отмеченных мест. Выберите больше времени или посмотрите демо'); return; }
         POINTS = found.points; METRO = found.metro;
         S.start = { ll: S.gps, name: 'Старт', demo: false, osm: true };
