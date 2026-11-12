@@ -307,7 +307,7 @@ h1, h2 { text-wrap: balance; }
       <button id="demoBtn" class="ghost" type="button">Посмотреть демо по Замоскворечью</button>
       <p class="note">Маршрут строится от того места, где вы сейчас. В Замоскворечье — места с нашими описаниями, в других районах — интересные места из OpenStreetMap.</p>
       <p class="note" id="diag" hidden style="text-align:left;user-select:text;-webkit-user-select:text"></p>
-      <p class="note" id="version">Версия 5 · 12 ноября</p>
+      <p class="note" id="version">Версия 6 · 12 ноября</p>
     </div>
   </div>
 </section>
@@ -708,6 +708,60 @@ function enrich(p) {
   if (e) { p.hint = e.hint; p.desc = e.desc; p.todo = e.todo; p.base += 1; }
   return p;
 }
+/* ---- Заранее подготовленные места Москвы (их раз в неделю собирает робот GitHub в папку data/) ---- */
+const GROUP = {
+  park: { type: 'park', moods: ['cozy', 'pretty'] }, water: { type: 'view', moods: ['pretty', 'cozy'] },
+  view: { type: 'view', moods: ['pretty'] }, art: { type: 'sight', moods: ['odd'] }, culture: { type: 'sight', moods: ['odd'] },
+  worship: { type: 'sight', moods: ['pretty', 'cozy'] }, monument: { type: 'sight', moods: ['odd'] },
+  history: { type: 'sight', moods: ['odd', 'pretty'] }, fountain: { type: 'sight', moods: ['pretty'] },
+  attraction: { type: 'sight', moods: ['odd', 'pretty'] }, street: { type: 'street', moods: ['cozy', 'food'] }
+};
+const TILE_LAT = 0.02, TILE_LON = 0.04;
+const tileCache = new Map();
+let metroPromise = null;
+async function fetchJson(url) {
+  const r = await fetchTimeout(url, {}, 8000);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+function loadTile(k) {
+  if (!tileCache.has(k)) {
+    tileCache.set(k, fetchJson('data/places/' + k + '.json').catch((e) => {
+      if (e.message === '404') return [];          // в этом квадрате ничего нет
+      tileCache.delete(k); throw e;
+    }));
+  }
+  return tileCache.get(k);
+}
+async function preparedPlaces(ll, radius) {
+  await fetchJson('data/info.json');               // нет файла — значит данные ещё не собраны
+  const dLat = radius / 111320, dLon = radius / (111320 * Math.cos(rad(ll[0])));
+  const keys = [];
+  for (let a = Math.floor((ll[0] - dLat) / TILE_LAT); a <= Math.floor((ll[0] + dLat) / TILE_LAT); a++) {
+    for (let b = Math.floor((ll[1] - dLon) / TILE_LON); b <= Math.floor((ll[1] + dLon) / TILE_LON); b++) keys.push(a + '_' + b);
+  }
+  const lists = await Promise.all(keys.map(loadTile));
+  if (!metroPromise) metroPromise = fetchJson('data/metro.json').catch(() => { metroPromise = null; return []; });
+  const metroAll = await metroPromise;
+  const points = [];
+  for (const p of lists.flat()) {
+    if (hav(ll, p.a) > radius) continue;
+    const grp = GROUP[p.g] || GROUP.attraction, gen = GENERIC[p.g] || GENERIC.attraction;
+    points.push(enrich({
+      id: 'osm' + p.i, name: p.n, type: grp.type, label: p.l, ll: p.a, moods: grp.moods, base: p.b,
+      evening: !!p.e, big: !!p.B, osm: true, hint: gen.hint, desc: p.d || gen.desc, todo: gen.todo, wiki: p.w || '',
+      meta: 'По данным OpenStreetMap' + (p.h ? ' · Часы: ' + p.h : '')
+    }));
+  }
+  const metro = metroAll.filter((m) => hav(ll, m.a) < radius + 1500).map((m) => ({ name: m.n, ll: m.a }));
+  return { points, metro };
+}
+// Сначала берём подготовленные места со своего сайта, и только если их нет — спрашиваем OpenStreetMap напрямую
+async function findPlacesAround(ll, radius) {
+  try { return await preparedPlaces(ll, radius); }
+  catch (e) { return await discoverCached(ll, radius); }
+}
+
 // Кэш найденных мест на неделю: при повторном запуске в том же месте работает быстрее и без сети
 async function discoverCached(ll, radius) {
   const key = 'kd_disc_' + (Math.round(ll[0] * 200) / 200) + '_' + (Math.round(ll[1] * 200) / 200) + '_' + radius;
@@ -943,7 +997,7 @@ async function startWalk(forceDemo) {
         // Любой другой район: места вокруг из OpenStreetMap
         loading(true, 'Ищем интересные места вокруг…');
         let found = null;
-        try { found = await discoverCached(S.gps, DISCOVER_RADIUS[S.time]); } catch (e) { found = null; }
+        try { found = await findPlacesAround(S.gps, DISCOVER_RADIUS[S.time]); } catch (e) { found = null; }
         loading(false);
         if (!found) {
           toast('Сервис карт OpenStreetMap не ответил. Попробуйте ещё раз через минуту');
@@ -1163,6 +1217,8 @@ function openCard(t, review) {
     (t.todo ? '<div style="display:flex;flex-direction:column;gap:8px"><div class="group"><h2>Чем заняться</h2></div><ul class="todo">' + t.todo.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul></div>' : '') +
     '<a class="ext-link" href="https://yandex.ru/maps/?text=' + encodeURIComponent(t.name) + '&ll=' + t.ll[1].toFixed(6) + '%2C' + t.ll[0].toFixed(6) + '&z=17" target="_blank" rel="noopener">Фото и отзывы в Яндекс Картах' +
       '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg></a>' +
+    (t.wiki ? '<a class="ext-link" href="https://ru.wikipedia.org/wiki/' + encodeURIComponent(t.wiki.replace(/ /g, '_')) + '" target="_blank" rel="noopener">Прочитать о месте в Википедии' +
+      '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg></a>' : '') +
     '<div class="actions">' +
       '<button type="button" class="ghost save" id="saveBtn" aria-pressed="' + isSaved + '">' + ICON.heart + '<span id="saveLabel">' + (isSaved ? 'Сохранено' : 'Сохранить') + '</span></button>' +
       '<button type="button" class="primary" id="nextBtn">' + (review ? 'Закрыть' : 'Идём дальше') + ICON.arrow + '</button>' +
