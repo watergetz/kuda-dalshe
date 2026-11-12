@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-12T16:54:40.561657+00:00",
+ "updated": "2026-11-12T18:00:53.059427+00:00",
  "places": 9788,
  "metro": 242,
  "tiles": 946,
@@ -18,9 +18,10 @@
   "street": 370,
   "water": 762
  },
+ "food": 14346,
  "described": {
-  "wikipedia": 1602,
-  "osm_description": 267,
+  "wikipedia": 1615,
+  "osm_description": 265,
   "osm_facts": 1404,
   "total": 9788
  }
