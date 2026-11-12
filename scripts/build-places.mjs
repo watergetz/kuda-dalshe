@@ -33,16 +33,15 @@ function hav(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-async function overpass(part) {
-  const q = '[out:json][timeout:600];' + AREA + '(' + part + ');out tags center;';
-  for (let attempt = 0; attempt < 3; attempt++) {
+async function overpass(q) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     for (const url of MIRRORS) {
       try {
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'kuda-dalshe-places/1.0 (github.com/watergetz/kuda-dalshe)' },
           body: 'data=' + encodeURIComponent(q),
-          signal: AbortSignal.timeout(700000)
+          signal: AbortSignal.timeout(200000)
         });
         if (!res.ok) { console.log('  ' + new URL(url).host + ': ' + res.status); continue; }
         const j = await res.json();
@@ -50,7 +49,7 @@ async function overpass(part) {
         return j.elements;
       } catch (e) { console.log('  ' + new URL(url).host + ': ' + e.message); }
     }
-    await sleep(30000);
+    await sleep(20000);
   }
   throw new Error('Overpass не ответил');
 }
@@ -82,37 +81,61 @@ export function classify(t) {
   return null;
 }
 
+// Москва вместе с Новой Москвой укладывается в этот прямоугольник; качаем его небольшими кусками
+const BBOX = { s: 55.13, w: 36.80, n: 56.03, e: 37.97 };
+const STEP_LAT = 0.15, STEP_LON = 0.2;
+function chunkQuery(s, w, n, e) {
+  const bb = '(' + [s, w, n, e].map((x) => x.toFixed(3)).join(',') + ')';
+  return '[out:json][timeout:180];' + AREA + '(' +
+    Object.values(PARTS).map((p) => p.replace('(area.m);', '(area.m)' + bb + ';')).join('') +
+    ');out tags center;';
+}
+
 async function main() {
-  const places = [], metro = [], seen = new Map();
-  for (const [name, part] of Object.entries(PARTS)) {
-    console.log('Скачиваю: ' + name);
-    const els = await overpass(part);
-    console.log('  получено ' + els.length);
-    for (const e of els) {
-      const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
-      if (lat == null) continue;
-      const t = e.tags || {};
-      const ll = [Math.round(lat * 1e5) / 1e5, Math.round(lon * 1e5) / 1e5];
-      if (name === 'metro') {
-        if (!metro.some((m) => m.n === t.name && hav(m.a, ll) < 1000)) metro.push({ n: t.name, a: ll });
-        continue;
-      }
-      const c = classify(t);
-      if (!c) continue;
-      const n = t.name || c.f || c.l;
-      const key = n.toLowerCase();
-      const prev = seen.get(key) || [];
-      if (prev.some((p) => hav(p, ll) < 500)) continue;
-      prev.push(ll); seen.set(key, prev);
-      const p = { i: e.type[0] + e.id, n, a: ll, g: c.g, l: c.l, b: c.b };
-      if (c.e) p.e = 1;
-      if (c.B) p.B = 1;
-      if (t.description && t.description.length > 20 && t.description.length < 400) p.d = t.description;
-      if (t.opening_hours) p.h = t.opening_hours;
-      if (t.wikipedia && t.wikipedia.startsWith('ru:')) p.w = t.wikipedia.slice(3);
-      places.push(p);
+  const all = new Map();
+  const chunks = [];
+  for (let s = BBOX.s; s < BBOX.n; s += STEP_LAT) {
+    for (let w = BBOX.w; w < BBOX.e; w += STEP_LON) chunks.push([s, w, Math.min(s + STEP_LAT, BBOX.n), Math.min(w + STEP_LON, BBOX.e)]);
+  }
+  let failed = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const t0 = Date.now();
+    try {
+      const els = await overpass(chunkQuery(...chunks[i]));
+      for (const e of els) all.set(e.type + e.id, e);
+      console.log('Кусок ' + (i + 1) + '/' + chunks.length + ': ' + els.length + ' объектов за ' + Math.round((Date.now() - t0) / 1000) + ' с');
+    } catch (e) {
+      failed++;
+      console.log('Кусок ' + (i + 1) + '/' + chunks.length + ': не получилось (' + e.message + ')');
     }
-    await sleep(10000); // бережём бесплатный сервер
+    await sleep(3000); // бережём бесплатный сервер
+  }
+  if (failed > chunks.length * 0.2) throw new Error('Не скачалось слишком много кусков: ' + failed + ' из ' + chunks.length);
+
+  const places = [], metro = [], seen = new Map();
+  for (const e of all.values()) {
+    const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+    if (lat == null) continue;
+    const t = e.tags || {};
+    const ll = [Math.round(lat * 1e5) / 1e5, Math.round(lon * 1e5) / 1e5];
+    if (t.railway === 'station') {
+      if (t.name && !metro.some((m) => m.n === t.name && hav(m.a, ll) < 1000)) metro.push({ n: t.name, a: ll });
+      continue;
+    }
+    const c = classify(t);
+    if (!c) continue;
+    const n = t.name || c.f || c.l;
+    const key = n.toLowerCase();
+    const prev = seen.get(key) || [];
+    if (prev.some((p) => hav(p, ll) < 500)) continue;
+    prev.push(ll); seen.set(key, prev);
+    const p = { i: e.type[0] + e.id, n, a: ll, g: c.g, l: c.l, b: c.b };
+    if (c.e) p.e = 1;
+    if (c.B) p.B = 1;
+    if (t.description && t.description.length > 20 && t.description.length < 400) p.d = t.description;
+    if (t.opening_hours) p.h = t.opening_hours;
+    if (t.wikipedia && t.wikipedia.startsWith('ru:')) p.w = t.wikipedia.slice(3);
+    places.push(p);
   }
   if (places.length < Number(process.env.MIN_PLACES || 500)) throw new Error('Подозрительно мало мест: ' + places.length);
 
