@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -50,7 +51,10 @@ def wikidata_titles(qids):
 
 
 def clean(text):
-    text = text.replace('́', '')                       # знаки ударения
+    # знаки ударения: и отдельные (U+0301), и «слитые» с буквой (á → а)
+    text = unicodedata.normalize('NFC', unicodedata.normalize('NFD', text).replace('\u0301', ''))
+    text = re.sub(r'(?<=[А-Яа-яЁё])[aeopcyx]|[aeopcyx](?=[А-Яа-яЁё])',
+                  lambda m: 'аеорсух'['aeopcyx'.index(m.group(0))], text)
     text = re.sub(r'\s*\((?:[^()]*?(?:англ|лат|нем|фр)\.[^()]*?)\)', '', text)  # переводы названия в скобках
     text = re.sub(r'\s+', ' ', text).strip()
     if len(text) <= MAX_LEN:
