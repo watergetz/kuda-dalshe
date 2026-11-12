@@ -19,6 +19,7 @@ TILE_LAT, TILE_LON = 0.02, 0.04       # квадрат ≈ 2,2 × 2,5 км
 MIN_PLACES = int(os.environ.get('MIN_PLACES', '500'))
 
 ARTWORK = {'sculpture': 'Скульптура', 'statue': 'Скульптура', 'mural': 'Мурал', 'graffiti': 'Граффити', 'installation': 'Инсталляция'}
+KIDS = re.compile(r'студи|детск|школ|кружок|развити|клуб|секци|курс', re.I)
 SKIP_MEMORIAL = {'plaque', 'blue_plaque', 'stolperstein', 'stone', 'grave'}
 
 
@@ -47,7 +48,7 @@ def classify(t):
         at = ARTWORK.get(t.get('artwork_type'), 'Арт-объект')
         return {'g': 'art', 'l': at, 'b': 2, 'f': at}
     if t.get('tourism') in ('museum', 'gallery') or t.get('amenity') in ('arts_centre', 'theatre'):
-        if not n:
+        if not n or KIDS.search(n):
             return None
         if t.get('tourism') == 'museum':
             label = 'Музей'

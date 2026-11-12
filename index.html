@@ -307,7 +307,7 @@ h1, h2 { text-wrap: balance; }
       <button id="demoBtn" class="ghost" type="button">Посмотреть демо по Замоскворечью</button>
       <p class="note">Маршрут строится от того места, где вы сейчас. В Замоскворечье — места с нашими описаниями, в других районах — интересные места из OpenStreetMap.</p>
       <p class="note" id="diag" hidden style="text-align:left;user-select:text;-webkit-user-select:text"></p>
-      <p class="note" id="version">Версия 6.1 · 12 ноября</p>
+      <p class="note" id="version">Версия 7 · 12 ноября</p>
     </div>
   </div>
 </section>
@@ -630,6 +630,7 @@ function plan(fromLL, budget, startLL, exclude) {
       for (const c of cands) {
         if (route.includes(c)) continue;
         if (route.some((r) => hav(r.ll, c.ll) < 90)) continue;
+        if (c.label === 'Фонтан' && route.some((r) => r.label === 'Фонтан')) continue;
         if (hav(cur, c.ll) < 40) continue;
         const w = walkMin(cur, c.ll), d = DWELL[c.type] || 5;
         const e = endFor(c.ll, startLL);
@@ -699,7 +700,7 @@ const GENERIC = {
 };
 // Свои описания для мест, которые находятся в OpenStreetMap по названию
 const ENRICH = [
-  { match: /ч[её]рное озеро/i, near: [55.70, 37.93], hint: 'Идите к большому озеру на краю района.',
+  { match: /ч[её]рное.*озеро/i, near: [55.70, 37.93], hint: 'Идите к большому озеру на краю района.',
     desc: 'Озеро на границе Некрасовки и Подмосковья. Вокруг него Москва и область благоустраивают большой парк с прогулочными дорожками и пешеходным мостом через воду в сторону Зенино.',
     todo: ['Пройтись вдоль берега', 'Найти место, откуда лучше всего видно воду'] }
 ];
@@ -713,7 +714,7 @@ const GROUP = {
   park: { type: 'park', moods: ['cozy', 'pretty'] }, water: { type: 'view', moods: ['pretty', 'cozy'] },
   view: { type: 'view', moods: ['pretty'] }, art: { type: 'sight', moods: ['odd'] }, culture: { type: 'sight', moods: ['odd'] },
   worship: { type: 'sight', moods: ['pretty', 'cozy'] }, monument: { type: 'sight', moods: ['odd'] },
-  history: { type: 'sight', moods: ['odd', 'pretty'] }, fountain: { type: 'sight', moods: ['pretty'] },
+  history: { type: 'sight', moods: ['odd', 'pretty'] }, fountain: { type: 'sight', moods: [] },
   attraction: { type: 'sight', moods: ['odd', 'pretty'] }, street: { type: 'street', moods: ['cozy', 'food'] }
 };
 const TILE_LAT = 0.02, TILE_LON = 0.04;
@@ -788,7 +789,7 @@ function classify(tags) {
     return { g: 'art', type: 'sight', label: at, moods: ['odd'], base: 2, fallbackName: at };
   }
   if (tags.tourism === 'museum' || tags.tourism === 'gallery' || tags.amenity === 'arts_centre' || tags.amenity === 'theatre') {
-    return n ? { g: 'culture', type: 'sight', label: tags.tourism === 'museum' ? 'Музей' : tags.amenity === 'theatre' ? 'Театр' : tags.tourism === 'gallery' ? 'Галерея' : 'Культура', moods: ['odd'], base: 2 } : null;
+    return n && !/студи|детск|школ|кружок|развити|клуб|секци|курс/i.test(n) ? { g: 'culture', type: 'sight', label: tags.tourism === 'museum' ? 'Музей' : tags.amenity === 'theatre' ? 'Театр' : tags.tourism === 'gallery' ? 'Галерея' : 'Культура', moods: ['odd'], base: 2 } : null;
   }
   if (tags.amenity === 'place_of_worship') return n ? { g: 'worship', type: 'sight', label: tags.religion === 'muslim' ? 'Мечеть' : 'Храм', moods: ['pretty', 'cozy'], base: 2 } : null;
   if (tags.historic === 'memorial' || tags.historic === 'monument') {
@@ -796,7 +797,7 @@ function classify(tags) {
     return n ? { g: 'monument', type: 'sight', label: 'Памятник', moods: ['odd'], base: 1.5 } : null;
   }
   if (tags.historic) return n ? { g: 'history', type: 'sight', label: 'История', moods: ['odd', 'pretty'], base: 2 } : null;
-  if (tags.amenity === 'fountain') return { g: 'fountain', type: 'sight', label: 'Фонтан', moods: ['pretty'], base: 1, fallbackName: 'Фонтан' };
+  if (tags.amenity === 'fountain') return { g: 'fountain', type: 'sight', label: 'Фонтан', moods: [], base: 1, fallbackName: 'Фонтан' };
   if (tags.tourism === 'attraction') return n ? { g: 'attraction', type: 'sight', label: 'Достопримечательность', moods: ['odd', 'pretty'], base: 2.5 } : null;
   return null;
 }
