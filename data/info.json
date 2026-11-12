@@ -1,21 +1,21 @@
 {
- "updated": "2026-11-12T14:43:16.454355+00:00",
- "places": 6645,
- "metro": 231,
- "tiles": 247,
+ "updated": "2026-11-12T14:54:13.625788+00:00",
+ "places": 9966,
+ "metro": 242,
+ "tiles": 948,
  "tileLat": 0.02,
  "tileLon": 0.04,
  "groups": {
-  "culture": 908,
-  "worship": 785,
-  "history": 464,
-  "attraction": 353,
-  "monument": 1297,
-  "view": 166,
-  "fountain": 327,
-  "art": 1194,
-  "park": 524,
-  "street": 270,
-  "water": 357
+  "culture": 1101,
+  "worship": 1345,
+  "history": 1083,
+  "attraction": 518,
+  "monument": 1888,
+  "view": 245,
+  "fountain": 458,
+  "art": 1467,
+  "park": 729,
+  "street": 370,
+  "water": 762
  }
 }
