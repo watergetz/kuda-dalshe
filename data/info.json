@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-12T15:03:49.102600+00:00",
+ "updated": "2026-11-12T16:29:20.322146+00:00",
  "places": 9869,
  "metro": 242,
  "tiles": 947,
@@ -17,5 +17,11 @@
   "park": 729,
   "street": 370,
   "water": 762
+ },
+ "described": {
+  "wikipedia": 1110,
+  "osm_description": 277,
+  "osm_facts": 1408,
+  "total": 9869
  }
 }
