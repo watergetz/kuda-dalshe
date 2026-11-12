@@ -307,7 +307,7 @@ h1, h2 { text-wrap: balance; }
       <button id="demoBtn" class="ghost" type="button">Посмотреть демо по Замоскворечью</button>
       <p class="note">Маршрут строится от того места, где вы сейчас. В Замоскворечье — места с нашими описаниями, в других районах — интересные места из OpenStreetMap.</p>
       <p class="note" id="diag" hidden style="text-align:left;user-select:text;-webkit-user-select:text"></p>
-      <p class="note" id="version">Версия 6 · 12 ноября</p>
+      <p class="note" id="version">Версия 6.1 · 12 ноября</p>
     </div>
   </div>
 </section>
@@ -825,7 +825,7 @@ async function discover(ll, radius) {
     }
     const c = classify(tags);
     if (!c) continue;
-    const name = tags.name || c.fallbackName;
+    const name = tags.name || c.fallbackName || c.label;
     const key = name.toLowerCase();
     if (seenNames.has(key) && hav(seenNames.get(key), [lat, lon]) < 500) continue;
     seenNames.set(key, [lat, lon]);

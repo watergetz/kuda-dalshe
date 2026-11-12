@@ -99,7 +99,7 @@ async function main() {
       }
       const c = classify(t);
       if (!c) continue;
-      const n = t.name || c.f;
+      const n = t.name || c.f || c.l;
       const key = n.toLowerCase();
       const prev = seen.get(key) || [];
       if (prev.some((p) => hav(p, ll) < 500)) continue;
